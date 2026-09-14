@@ -1,0 +1,608 @@
+---
+title: "MA22015 2026 - Coursework"
+output:
+  pdf_document:
+    latex_engine: xelatex
+    toc: true
+  html_document:
+    df_print: paged
+    toc: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,comment=NA)
+```
+
+
+## Generative AI statement
+
+```{r}
+# Type B: Generative AI is permitted as an assistive tool within the assessment.
+# GenAI was used in the following ways:
+# - To write code to extract and neatly output relevant information from Linear
+#   model summaries to keep output concise and avoid outputting full summaries
+# - To find the pairs() function to visualise correlation in question 6
+# - To proof read my answers
+# - To find ifelse() function to tidy my code on question 5
+
+
+
+
+# Further note:
+# - I had various issues with R which I discussed in my lab. I was instructed:
+#    - use xelatex instead of tinytex
+#    - I had an issue with special characters in the data, calling 
+#      Sys.setlocale("LC_CTYPE", "en_US.UTF-8") fixed it.
+# - Code has been used and referenced from data science module throughout
+```
+
+## Setup
+
+```{r}
+#| message: FALSE
+#| warning: FALSE
+
+
+polpres <- read.csv("polpres.csv")
+
+# used from Data science module
+library(tidyverse)
+library(knitr)
+library(janitor)
+```
+
+The wordcount:
+
+```{r}
+library(rmdwc)
+rmdcount("cw26.Rmd")$words
+```
+
+
+## 1. Additional Voters
+
+```{r}
+
+polpres <- polpres %>% 
+  mutate(
+    r1_votes = Bartoszewicz + Biejat + Braun + Hołownia + Jakubiak +
+               Maciak + Mentzen + Nawrocki + Senyszyn + Stanowski +
+               Trzaskowski + Woch + Zandberg,
+    r2_votes = spoilt + N2 + T2)
+
+polpres <- polpres %>% 
+  mutate(r2_voter_increase = r2_votes - r1_votes)
+
+top_5_vote_change <- polpres %>% 
+  select(county, r2_voter_increase, r1_votes, r2_votes) %>% 
+  slice_max(order_by = abs(r2_voter_increase), n = 5) %>% 
+  arrange(desc(r2_voter_increase))
+
+polpres %>% 
+  ggplot(aes(x = county, y = r2_voter_increase))+
+  geom_point()+
+  geom_text(
+    data = top_5_vote_change,
+    aes(label = county),
+    vjust = -0.5)+
+  theme_minimal()+
+  theme(axis.text.x = element_blank())+
+  labs(x = "County", y = "Vote increase (raw count)", 
+       title = "Increase/decrease in voters round 1 to round 2")
+```
+
+I created "r2_voter_increase" with the increase of voters for each county in r2. There seemed to be unusual changes: "Zagranica" increased by 142347 voters. "Zagranica" and "Warszawa" both have large populations, so I computed % increase as raw counts are biased to bigger populations.
+
+```{r}
+polpres <- polpres %>% 
+  mutate(pct_r2_voter_increase = 100 * (r2_votes - r1_votes) / r1_votes)
+
+top_5_pct_vote_change <- polpres %>% 
+  select(county, pct_r2_voter_increase, r1_votes, r2_votes) %>% 
+  slice_max(order_by = abs(pct_r2_voter_increase), n = 5) %>% 
+  arrange(desc(pct_r2_voter_increase))
+
+top_5_pct_vote_change %>% 
+  kable(caption = "Top 5 counties by percentage change in No. of voters") 
+
+# kable() from knitr has been used throughout, for neat table outputs in our compiled file
+# Referenced from Data science module
+```
+
+```{r}
+
+polpres %>% 
+  ggplot(aes(x = county, y = pct_r2_voter_increase))+
+  geom_point()+
+  geom_text(
+    data = top_5_pct_vote_change,   # geom_text() used from data science
+    aes(label = county),
+    vjust = -0.7)+ 
+  theme_minimal()+
+  theme(axis.text.x = element_blank())+
+  labs(x = "County", y = "Voter increase (%)", 
+       title = "Percentage increase/decrease in voters round 1 to round 2")
+
+```
+
+The majority of counties have a 5-10% increase in r2 voters. Again "Zagranica" has a disproportionate increase of 31%. Gryficki, kołobrzeski and kamieński also have large increases over 20%. 
+
+```{r}
+
+lmod_vote_increase <- lm(pct_r2_voter_increase ~ 1, data = polpres)
+polpres_resid <- polpres %>% 
+  mutate(student_resid = rstudent(lmod_vote_increase))
+polpres_resid %>% 
+  arrange(desc(abs(student_resid))) %>% 
+  select(county, student_resid) %>% 
+  head(7) %>% 
+  kable(caption = "Studentised residuals by County")
+
+ncounties <- nrow(polpres)
+vote_increase_cv <- abs(qt(.05/(ncounties*2),ncounties-1-1))
+
+cat("Bonferroni critical value is", round(vote_increase_cv,3))
+
+```
+
+I conducted a test to see which counties were outliers assuming all counties have the same mean increase. Six observations exceeded the Bonferroni critical value (3.864), so these are statistically outliers relative to the overall mean percentage increase. Zagranica had the largest value, indicating it was the largest outlier. 
+
+
+I looked closer at Zagranica:
+
+```{r}
+
+polpres %>% 
+  filter(county == "zagranica") %>% 
+  select(ccode, county, eligible) %>% 
+  kable()
+
+```
+
+Zagranica doesn't have a county code. It translates to "abroad", so we cannot directly compare its behaviour to other counties as it is a fundamentally different group.
+
+
+To conclude, among "counties" there is still evidence of unusually large vote increases in gryficki, kołobrzeski, kamieński, nowodworski and pucki.
+
+
+## 2. Exit Poll
+
+```{r}
+
+proportion_T2 <- sum(polpres$T2) / (sum(polpres$T2) + sum(polpres$N2))
+cat("Trzaskowski received", round(proportion_T2*100, 1),"% of the votes in round 2.", "\n") 
+# genAI used to find \n to put it on a new line
+
+p <- 1 - pbinom(500, size = 1000, prob = proportion_T2)
+cat("Probability of majority in random sample of 1000:", round(p,2), "\n")
+
+```
+
+The r2 proportion for Trzaskowski was 49.1%, so a randomly selected voter would have voted for him with estimated probability 0.491. 
+
+Assuming randomness, X votes for Trzaskowski in 1000 voters is ~binom(1000,0.491), so probability that the majority voted Trzaskowski is 1-p(X<=500)=0.28.
+
+
+Around 1 in 4 exit polls would incorrectly show Trzaskowski leading, so an early exit poll showing Trzaskowski ahead would not be surprising even if Nawrocki ended as the overall winner.
+
+## 3. Turnout
+
+```{r}
+
+polpres %>% 
+  filter(is.na(ccode)) %>% 
+  select(ccode, county, province, eligible) %>% 
+  kable(caption = "Closer inspection of missing ccodes")
+
+polpres_polish_citizens <- polpres %>%
+  filter(county != "zagranica") %>%
+  filter(county != "statki") %>%  
+  mutate(r2_pct_turnout = 100* (spoilt + N2 + T2)/ eligible2) 
+```
+
+Filtering voters registered in Poland:
+
+
+From q1, "zagranica" refers to abroad voters. I checked which other counties are missing ccodes: I found "statki", translating to "ships". I removed these. 
+
+
+Pct turnout for the remaining counties:
+
+```{r}
+turnout_province <- polpres_polish_citizens %>% 
+  group_by(province) %>% 
+  summarise(Mean = mean(r2_pct_turnout),
+            SD = sd(r2_pct_turnout)) %>% 
+  arrange(desc(Mean)) 
+
+turnout_province %>% 
+  kable(caption = "Percentage turnout by Province (excluding voters not registered in Poland)")
+```
+
+The means ranged from 61-74%. I made a plot to visualise:
+
+```{r}  
+
+polpres_polish_citizens %>% 
+  ggplot(aes(x = province, y = r2_pct_turnout))+
+  geom_boxplot()+
+  labs(x = "Province", y = "Turnout (%)", 
+       title = "Percentage turnout by Province (excluding voters not registered in Poland)")+
+  theme_minimal()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) # used from data science
+# module to neaten labels
+
+```
+
+There is moderate variation between provinces, but no single Province is striking as exceptionally high or low. Mazowieckie and opoloskie have the highest and lowest mean turnouts respectively. 
+
+
+I decided to do an anova test to see if the difference in provinces is statistically significant. 
+
+
+```{r}
+
+lmod_null <- lm(r2_pct_turnout ~ 1, data = polpres_polish_citizens)
+lmod_turnout <- lm(r2_pct_turnout ~ province, data = polpres_polish_citizens)
+anova(lmod_null, lmod_turnout)$`Pr(>F)`[2] 
+# genAIhas been used to extract relevant parts of the summary, to keep the output concise
+```
+We get an extremely small p-value: strong evidence the turnout depends on the Province, and we do not have equal means.  
+
+I checked whether any provinces are outliers:
+
+```{r}
+
+lmod_province <- lm(Mean ~ 1, data = turnout_province)
+turnout_province <- turnout_province %>% 
+  mutate(student_resid = rstudent(lmod_province))
+turnout_province %>% 
+  arrange(desc(abs(student_resid))) %>% 
+  select(province, student_resid) %>% 
+  head(5) %>% 
+  kable(caption = "Studentised residuals by Province")
+
+bonferroni_critical_value <- abs(qt(.05/(16*2),16-1-1))
+
+cat("Bonferroni critical value is", round(bonferroni_critical_value,3))
+
+```
+
+I fitted a linear model under the assumption that turnout doesn't depend on the province. I computed the studentized residuals, and the Bonferroni critical value (0.05 significance, 14df) was 3.562. Oploskie and mazowieckie had the most extreme residuals (consistent with our earlier plot) however 2.19 does not exceed 3.562 so it is not an outlier. 
+
+
+Although the anova test shows there is statistically significant variation in between provinces, no individual province stands out as exceptionally high or low turnout.  
+
+
+## 4. Spoilt Ballots
+
+```{r}
+#| message: FALSE
+
+polpres_spoilt_votes <- polpres %>% 
+  mutate("T2_proportion" = T2/(N2 + T2)) %>% 
+  select(county, province, eligible2, spoilt, N2, T2, T2_proportion) %>% 
+  mutate("pct_spoilt"= 100* (spoilt/(N2+T2+spoilt)))
+
+polpres_spoilt_votes %>% 
+  arrange(desc(pct_spoilt)) %>% 
+  slice_head(n=5) %>% 
+  select(county, pct_spoilt) %>% 
+  kable(
+    caption = "Percentage of votes spoilt vs proportion of votes for \n Trzaskowski in each County (round 2)")
+
+polpres_spoilt_votes_statki <- polpres_spoilt_votes %>% 
+  filter(county == "statki")
+
+polpres_spoilt_votes %>% 
+  ggplot(aes(x = pct_spoilt, y = T2_proportion))+
+  geom_point()+
+  geom_text(data = polpres_spoilt_votes_statki,
+    aes(label = county),
+    vjust = -0.7)+ # geom_text used from data science module
+  geom_smooth(method = lm, se = FALSE)+
+  labs(
+    title = "Votes spoilt (%) vs proportion of votes for \n Trzaskowski in each County (round 2)",
+    x = "Votes spoilt (%)", y = "Proportion of votes for Trzaskowski")+
+  theme_minimal()
+
+```
+
+I computed the % votes spoilt per county, and then plotted against the proportion of votes for Trzaskowski in r2. From the output, clearly statki is unusual. 
+
+I fitted a model and checked diagnostics to see if removing Statki is plausible. 
+
+
+```{r}
+
+lmod_spoilt_T2 <- lm(T2_proportion ~ pct_spoilt, data = polpres_spoilt_votes)
+
+plot(lmod_spoilt_T2,5)
+
+```
+
+Using residuals vs leverage plot, Statki lies outside Cook's distance so I have decided to remove it before analysis. It would not be sensible to allow Statki with a small relative population to have such leverage over our model estimates. 
+
+```{r}
+#| message: FALSE
+
+polpres_spoilt_votes2 <- polpres_spoilt_votes %>% 
+  filter(county != "statki")
+
+lmod_spoilt_T2 <- lm(T2_proportion ~ pct_spoilt, data = polpres_spoilt_votes2)
+
+polpres_spoilt_votes2 %>% 
+  ggplot(aes(x = pct_spoilt, y = T2_proportion))+
+  geom_point()+
+  geom_smooth(method = lm, se = FALSE)+
+  labs(
+    title = "Votes spoilt (%) vs proportion of votes for \n Trzaskowski in each County (round 2)",
+    x = "Votes spoilt (%)", y = "Proportion of votes for Trzaskowski")+
+  theme_minimal()
+
+```
+
+Having removed "statki" diagnostic plots were fine. The plot suggests some positive linear association between % votes spoilt and proportion for Trzaskowski in r2 in each county. 
+
+I investigated more formally:
+
+```{r}
+lmod_spoilt_T2_summary <- summary(lmod_spoilt_T2)
+
+cat("p-value is tiny (",summary(lmod_spoilt_T2)$coefficients["pct_spoilt", 4],")","\n")
+cat("beta1 estimate is", round(coef(lmod_spoilt_T2)["pct_spoilt"],3),"\n")
+cat("R squared value is", round(summary(lmod_spoilt_T2)$r.squared,3),"\n")
+# genAI was used to extract the relevant values to save having to output the full summary
+```
+
+From this summary:
+
+
+(1) the p value is extremely small so there is strong statistical evidence of a positive linear association between spoilt vote % and     Trzaskowski’s vote share.
+
+
+(2) beta1 estimate is 0.562, implying a 1 percentage point increase in spoilt results in 0.56218 percentage point increase in proportion of votes for Trzaskowski
+
+
+(3) R^2=0.2311 which indicates there is still a lot of variation left unexplained between counties i.e. there are other factors which also affect voting proportions in round 2
+
+
+
+```{r}
+#| message: FALSE
+polpres_spoilt_votes2$resid <- resid(lmod_spoilt_T2)
+
+polpres_spoilt_votes2 %>% 
+  ggplot(aes(y = resid, x = log(eligible2)))+
+  geom_point()+
+  geom_smooth(se = FALSE)+
+  theme_minimal()+ 
+  labs(x = "No. eligible voters (log scale)", y = "Residuals")
+
+cat("Correlation coefficient between residuals and size is", 
+    round(cor(log(polpres_spoilt_votes2$eligible2), polpres_spoilt_votes2$resid),3))
+
+```
+
+I noted my original model does not account for the size of counties. I decided to take residuals from my model and plot them against no. eligible voters in r2 per county, to investigate whether bigger counties are underestimated by the model. I introduced a log transform on the x axis as the original scale lacked interpretability. 
+
+
+This suggested evidence that Trzaskowski support in larger counties is more likely to be underestimated from %spoilt. Therefore, the previously estimated relationship (between Trzaskowski support and % spoilt) likely understates the overall national effect, because larger counties (with more votes) show stronger than predicted support for Trzaskowski. 
+
+I conclude evidence suggests that Trzaskowski had higher support among spoilt votes. 
+
+## 5. USA-style election
+
+```{r}
+
+r2_province_summary <- polpres %>% 
+  filter(county != "zagranica") %>%
+  filter(county != "statki") %>% 
+  group_by(province) %>% 
+  summarise(
+    eligible_voters = sum(eligible2), 
+    N2_votes = sum(N2),
+    T2_votes = sum(T2))
+
+r2_province_summary %>%
+  mutate(winner = ifelse(T2_votes > N2_votes, "Trzaskowski", "Nawrocki")) %>% 
+  group_by(winner) %>%
+  summarise(Electoral_College_Votes = sum(eligible_voters)) %>% 
+  kable(caption = "No. votes per candidate in a USA-style system")
+
+#genAI used to find ifelse() function to make this code cleaner
+
+cat("Trzaskowski wins by",19244178-9397732, "Electoral college votes")
+
+```
+In the USA electoral system, abroad voters contribute to the state they are registered in. As we have no way of attributing abroad voters to their respective provinces, I have removed "statki" and "zagranica". 
+
+
+I summarised the round 2 votes for both candidates by province, then created a column indicating who won that province, in order to sum the electoral college votes (ECVs) using "eligible2" variable. 
+
+In a USA-style election Trzaskowski wins by around 9.8 million ECVs.
+
+
+```{r}
+
+N2_deficit <- r2_province_summary %>% 
+  mutate(N2_deficit = T2_votes - N2_votes) %>% 
+  filter(N2_deficit>0) %>% 
+  arrange(N2_deficit)
+
+N2_deficit %>% 
+  head(8) %>% 
+  kable(caption = "Provinces ordered by smallest Nawrocki deficit")
+
+```
+Fewest votes to swing USA-Style election:
+
+I computed provinces with the smallest Nawrocki deficit.
+
+Flipping a province subtracts ECVs from Trzaskowski and adds to Nawrocki, so we only require half the difference: 9846446/2=4923223. Flipping Mazowieckie and warmińsko-mazurskie is a 4152285+1035396=5187681 ECV swing, so would change the overall outcome. This equates to (17977+22686)/2=*20332* raw votes change. 
+
+These are the 2 provinces with the smallest deficit, and no other provinces have enough ECVs to overturn the result alone, so this is the minimum possible combination. 
+
+*20332* votes required to change outcome of USA-style election.
+
+```{r}
+polpres %>% 
+  summarise(Nawrocki = sum(N2), Trzaskowski = sum(T2)) %>% 
+  mutate(Nawrocki_won_by = Nawrocki-Trzaskowski) %>% 
+  kable(caption= " Votes in the Polish electoral system")
+
+```
+
+Nawrocki won by 369,591 votes in the Polish system: the minimum votes needed to flip the result is (369591/2 = 184795.5) 184,796.
+
+
+## 6. Transfer of first round votes
+
+```{r}
+
+polpres <- polpres %>%
+  mutate(
+    r1_total = Bartoszewicz + Biejat + Braun + Hołownia + Jakubiak +
+               Maciak + Mentzen + Nawrocki + Senyszyn +
+               Stanowski + Trzaskowski + Woch + Zandberg,
+    Biejat_prop = Biejat / r1_total,
+    Zandberg_prop = Zandberg / r1_total,
+    Holownia_prop = Hołownia / r1_total,
+    Braun_prop = Braun / r1_total,
+    Mentzen_prop = Mentzen / r1_total)
+
+polpres <- polpres %>% 
+  mutate(T2_proportion = T2/(N2 + T2))
+
+polpres <- polpres %>%
+  mutate(
+    turnout_r1 = r1_total / eligible,
+    turnout_r2 = (N2 + T2 + spoilt) / eligible2,
+    late_voters = turnout_r2 - turnout_r1)
+
+lmod_r1 <- lm(
+  T2_proportion ~ Biejat_prop + Zandberg_prop + Holownia_prop + Braun_prop + Mentzen_prop + late_voters,
+  data = polpres)
+
+```
+
+To estimate how voters for Biejat, Zandberg, Hołownia, Braun, and Mentzen and the late joiners voted in round 2 I fitted a linear model with round 2 proportion for Trzaskowski as the response. Initially I fitted it with raw vote counts but the diagnostic plots were quite skewed so I computed the proportion for each canditate instead as the predictors, for which the diagnostics looked good. 
+
+
+```{r}
+
+cat("R squared value is", round(summary(lmod_r1)$r.squared,3),"\n")
+
+fstat_lmod_r1 <- summary(lmod_r1)$fstatistic
+p_val_lmod_r1 <- pf(fstat_lmod_r1[1], fstat_lmod_r1[2], fstat_lmod_r1[3], lower.tail = FALSE)
+
+cat("Model p-value is significant (", signif(p_val_lmod_r1, 3), ")", "\n")
+
+
+summary(lmod_r1)$coefficients[,1] %>% 
+  kable(caption = "Estimated parameters")
+```
+
+From the summary we can deduce:
+
+
+(1) r squared is 0.88, which means the model is a very good fit and explains roughly 88% of variation in R2 vote proportion for Trzaskowski. So candidate voted for in round 2 is strongly dependent on round 1 candidate vote. 
+
+
+(2) P value very small so at least one predictor is significant in determining second round outcome
+
+
+(3) Biejat coefficient is 5.279, so strongly positive. Indicates counties supporting Biejat in round 1 leikely showed strong support for Trzaskowski in round 2. Same reasoning applies to Holownia.
+
+
+(4) The other candidates (and late voters) have negative coefficients and indicate their supporters favoured Nawrocki in R2
+
+
+In this data, it is very likely that we have collinearity, as candidates can be grouped by political views. I have computed the correlation matrix between predictors below:
+
+
+```{r}
+
+cor(polpres %>%
+      select(Biejat_prop, Zandberg_prop, Holownia_prop, Braun_prop, Mentzen_prop))
+
+pairs(polpres %>%
+  select(Biejat_prop, Zandberg_prop, Holownia_prop, Braun_prop, Mentzen_prop, late_voters)) 
+# genAI was used to find the pairs() function in order to visualise pairwise correlation
+
+```
+The correlation matrix suggests counties that had high Biejat proportion also tended to have high Zandberg and Holownia votes, whereas counties with high Mentzen support also had high Braun support. This implies that these groups are ideologically similar. I plotted the pairwise correlations to visualise these relationships. Late voters did not display correlation with any candidates. 
+
+
+Upon further research (sites: [Mentzen](https://en.wikipedia.org/wiki/S%C5%82awomir_Mentzen), 
+[Braun](https://en.wikipedia.org/wiki/Grzegorz_Braun), 
+[Biejat](https://en.wikipedia.org/wiki/Magdalena_Biejat), 
+[Zandberg](https://en.wikipedia.org/wiki/Adrian_Zandberg), 
+[2025 Polish presidential election](https://en.wikipedia.org/wiki/2025_Polish_presidential_election)), 
+I discovered that Mentzen and Braun are right-wing, Biejat and Zandberg are left-wing, and Hołownia is centrist. I decided to group the candidates by political views to simplify the model and hopefully increase interpretability.
+
+
+```{r}
+
+polpres_political_groups <- polpres %>%
+  mutate(
+    left_p = Biejat_prop + Zandberg_prop,
+    centre_p = Holownia_prop,
+    right_p = Braun_prop + Mentzen_prop) %>% 
+  filter(county != "statki") %>% 
+  filter(county != "zagranica")
+  
+lmod_test <- lm(T2_proportion ~ left_p + centre_p + right_p + late_voters, data = polpres_political_groups)
+```
+
+
+I computed the political groups. I found that "statki" and "zagranica" had high leverage in the model (outside cook's distance), hence I removed them from this model. It is unsurprising they don't follow the same trends as counties, as the voters are not all in the same geographical location so may have more variation and unpredictability in political views. After removing the diagnostics look good. 
+
+
+```{r}
+
+cat("p-value for late voters is", 
+    summary(lmod_test)$coefficients["late_voters", "Pr(>|t|)"], "\n")
+drop1(lmod_test)
+
+```
+The p value for late voters was 0.95, so we could remove it as it is insignificant. The drop1() function confirms that removing late voters lowers the AIC to -2308.2. 
+
+```{r}
+lmod_r <- lm(T2_proportion ~ left_p + centre_p + right_p, data = polpres_political_groups)
+
+
+cat("R squared is", summary(lmod_r)$r.squared, "\n") 
+
+summary(lmod_r)$coef[,4] %>% 
+  kable(caption = "p values") 
+
+#genAI used to extract relevant parts of the summary
+
+summary(lmod_r)$coef[,1] %>% 
+  kable(caption = "Estimated coefficients")
+
+
+```
+
+
+Here we deduce:
+
+
+(1) r^2=0.859 meaning this simplified model still explains most of the variance, despite losing complexity
+
+
+(2) All predictors are significant
+
+
+(3) Left wing counties have coefficient +1.05 hence counties supporting Biejat and Zandberg showed stronger support for Trzaskowski in R2
+
+
+(4) Centrist counties have coefficient +4.23 so counties supporting Holownia showed very strong support for Trzaskowski in R2
+
+
+(5) Right wing counties have -1.96 coefficient counties supporting Braun and Mentzen mostly displayed support for Nawrocki in r2
+
+
+(6) There is little evidence late voters favoured either candidate in r2
+
